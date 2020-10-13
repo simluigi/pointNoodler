@@ -1,6 +1,4 @@
 *.pyc
-edgeMesher/
-vertexFacer/
 practiceCode/
 workingFiles/
 textDump.*

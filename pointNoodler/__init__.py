@@ -82,8 +82,8 @@ def getMDagPath(node):
         lst.getDagPath(0, dagPath)
         return dagPath
     except:
-        raise ("Unable to get MDagPath. Have you specified an appropriate node?")
-        return None
+        print ("Unable to get MDagPath. Have you specified an appropriate node?")
+        raise
 
 def getMObject(node, obj):
     lst = om.MSelectionList()
@@ -91,8 +91,8 @@ def getMObject(node, obj):
     try:
         return lst.getDependNode(0, obj)
     except:
-        raise ("Unable to get MObject. Have you specified an appropriate node?")
-        return None
+        print ("Unable to get MObject. Have you specified an appropriate node?")
+        raise
 
 def printMatrix(matrix):
     result = '% .06f, % .06f, % .06f, % .06f,\n% .06f, % .06f, % .06f, % .06f,\n% .06f, % .06f, % .06f, % .06f,\n% .06f, % .06f, % .06f, % .06f,\n'
