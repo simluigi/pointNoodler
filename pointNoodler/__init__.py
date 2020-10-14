@@ -36,7 +36,6 @@ def pointNoodler(pointList):
     while not vit.isDone():
         p = vit.position()                  # position of vertex
         k = p.x + mod                       # rounds p to the nearest decimal digit and converts to int format
-        print str(k)
         lst = sectionIndices.get(k, [])     # add list to key(all points that share the same x-axis)
         lst.append(vit.index())             # appends index of vit to the list
         sectionIndices[k] = lst             # sets this list as the value of sectionIndices[with index k]
@@ -63,12 +62,21 @@ def pointNoodler(pointList):
             p.x = 0
             noodlePoints.set(p * matrix, index)
 
-
-
     # translate final points (cap) HERE    
-    for index in sectionIndices[numSections]:
+    for index in sectionIndices[numSections]:     
+        o = pointList[numSections]              
+        i = om.MVector (pointList[numSections])          # no more +1 since final section  
+        i.normalize()                 
+        u = om.MVector(0, 1, 0)                  
+        k = i ^ u
+        j = k ^ i         
+
+        # plugs in all the values from vectors/points and generates a 4x4 matrix
+        matrix = om.MMatrix()
+        om.MScriptUtil.createMatrixFromList( (i.x, i.y, i.z, 0, j.x, j.y, j.z, 0, k.x, k.y, k.z, 0, o.x, o.y, o.z, 0), matrix)   
+
         p = noodlePoints[index]
-        p.x = 0                                # assumption that final segment is of length 1; need to derive later
+        p.x = 0 
         noodlePoints.set(p * matrix, index)   
 
     # finally, set the points of the generated noodle to align to the matrix
