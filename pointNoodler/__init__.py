@@ -8,10 +8,13 @@ End goal is to make a plugin that generates a 'noodle' (thin cylinder) that trav
    (noodles sounds more fun than polyCylinder, right?) 
 
 Benchmarks:
--Derive numSections of noodle given the pointList.      (complete as of 2020.10.13)
--Generate a noodle with the appropriate # of sections.  (complete as of 2020.10.13)
--Align the noodle with the given pointList.             (complete as of 2020.10.14)
--Average out vertex data for smoother segments.         (complete as of 2020.10.15)
+-Derive numSections of noodle given the pointList.          (complete as of 2020.10.13)
+-Generate a noodle with the appropriate # of sections.      (complete as of 2020.10.13)
+-Align the noodle with the given pointList.                 (complete as of 2020.10.14)
+-Average out vertex data for smoother segments.             (complete as of 2020.10.15)
+-Extract selected edges (kMeshEdgeComponent)                (complete as of 2020.10.15)
+-Store selected edge/s' data (MFnSingleIndexedComponent)    (complete as of 2020.10.15) 
+-Extract points from edge data                              (in progress as of 2020.10.15)
 
 """
 import maya.cmds as cmds
@@ -21,15 +24,24 @@ import pprint
 # removing all other arguments until I can get it right and then understand the meaning & implementation of the original arguments (upVecList, parent)
 def pointNoodler(pointList):    
 
-    # check if there are enough points to make at least 1 section
+    # error handling: check if there are enough points to make at least 1 section
     if len(pointList) -1 < 2:
         raise Exception ("Need at least 2 points to perform pointNoodler!")
     
     numSections = len(pointList) -1        # -1 : minus the cap
     mod = float( numSections / 2.0 ) 
 
+    # getting edges from selected data and storing as an MFnSingleIndexedComponent object
+    edges = getSelectedEdges()
+
+    # generating pointList from edges
+    edgePoints = om.MPointArray()
+
+
+    # creating noodle with appropriate number of sections
     noodleTr = createNoodle(numSections)                    # noodle Transform
     noodle = cmds.listRelatives(noodleTr, shapes=1)[0]      # returns the shape under noodleTr
+
     objNoodle = om.MObject()
     getMObject(noodle, objNoodle)
     meshNoodle = om.MFnMesh(objNoodle)
@@ -108,20 +120,40 @@ def pointNoodler(pointList):
 helper functions
 """
 
+# basic function for getting selected edges' data
+def getSelectedEdges():
+    sel = om.MSelectionList()
+    obj = om.MObject()
+    om.MGlobal.getActiveSelectionList(sel)
+    sel.getDependNode(0, obj)    
+
+    comp = om.MObject()
+    dag = om.MDagPath()
+    sel.getDagPath(0, dag, comp)        # question: dag is not really used, but I don't see a function that just gets component on its own. Why?
+    
+    # error handling: if selected components are edges or not
+    if comp.apiTypeStr() != "kMeshEdgeComponent":
+        raise Exception ("Selected component/s are not of type kMeshEdgeComponent. Are you in edge selection mode and have selected at least 1 edge?")   
+    else:
+        edges = om.MFnSingleIndexedComponent(comp)
+        print ("Number of edges selected: ") + str(edges.elementCount())
+        return edges  
+
 # basic DAG path and Depend Node getter functions
 def getMDagPath(node):
     lst = om.MSelectionList()
     lst.add(node)
     dagPath = om.MDagPath()
+    comp = om.MObject()
     try:
-        lst.getDagPath(0, dagPath)
-        return dagPath
+        lst.getDagPath(0, dagPath, comp)
+        return dagPath, comp
     except:
         print ("Unable to get MDagPath. Have you specified an appropriate node?")
         raise
 
 def getMObject(node, obj):
-    lst = om.MSelectionList()
+    lst = om.MSelectionList()    
     lst.add(node)
     try:
         return lst.getDependNode(0, obj)
