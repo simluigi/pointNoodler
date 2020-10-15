@@ -2,7 +2,7 @@
 """
 -- pointNoodler plugin --
 Author          : Sim Luigi
-Last Modified   : 2020.10.14
+Last Modified   : 2020.10.15
 
 End goal is to make a plugin that generates a 'noodle' (thin cylinder) that traverses any number of given points.
    (noodles sounds more fun than polyCylinder, right?) 
@@ -11,7 +11,7 @@ Benchmarks:
 -Derive numSections of noodle given the pointList.      (complete as of 2020.10.13)
 -Generate a noodle with the appropriate # of sections.  (complete as of 2020.10.13)
 -Align the noodle with the given pointList.             (complete as of 2020.10.14)
--Average out vertex data for smoother segments.         (in progress as of 2020.10.14)
+-Average out vertex data for smoother segments.         (complete as of 2020.10.15)
 
 """
 import maya.cmds as cmds
@@ -21,6 +21,10 @@ import pprint
 # removing all other arguments until I can get it right and then understand the meaning & implementation of the original arguments (upVecList, parent)
 def pointNoodler(pointList):    
 
+    # check if there are enough points to make at least 1 section
+    if len(pointList) -1 < 2:
+        raise Exception ("Need at least 2 points to perform pointNoodler!")
+    
     numSections = len(pointList) -1        # -1 : minus the cap
     mod = float( numSections / 2.0 ) 
 
@@ -44,7 +48,11 @@ def pointNoodler(pointList):
 
     noodlePoints = om.MPointArray()
     meshNoodle.getPoints(noodlePoints)      # gets all the points in the noodle -mesh- (not node or object) and assigns to noodlePoints(type MPointArray)
-    oldMatrix = om.MMatrix()
+    
+    matrix = om.MMatrix()
+    oldI = om.MVector()
+    oldJ = om.MVector()
+    oldK = om.MVector()
 
     for section in xrange(numSections): 
         o = pointList[section]              # maya.OpenMaya.MPoint
@@ -54,23 +62,19 @@ def pointNoodler(pointList):
         k = i ^ u
         j = k ^ i         
 
-        # is there a faster way to do this? Should probably turn this into a function of its own
         if section > 0:
-            i.x = i.x + oldMatrix(0, 0) * 0.5
-            i.y = i.y + oldMatrix(0, 1) * 0.5
-            i.z = i.z + oldMatrix(0, 2) * 0.5
-            
-            j.x = j.x + oldMatrix(1, 0) * 0.5
-            j.y = j.y + oldMatrix(1, 1) * 0.5
-            j.z = j.z + oldMatrix(1, 2) * 0.5
+            avgI = (i + oldI).normal()
+            avgJ = (j + oldJ).normal()
+            avgK = (k + oldK).normal()
 
-            k.x = k.x + oldMatrix(2, 0) * 0.5
-            k.y = k.y + oldMatrix(2, 1) * 0.5
-            k.z = k.z + oldMatrix(2, 2) * 0.5
+        else:
+            avgI = i
+            avgJ = j
+            avgK = k
 
         # plugs in all the values from vectors/points and generates a 4x4 matrix
-        matrix = om.MMatrix()
-        om.MScriptUtil.createMatrixFromList( (i.x, i.y, i.z, 0, j.x, j.y, j.z, 0, k.x, k.y, k.z, 0, o.x, o.y, o.z, 0), matrix)
+        # matrix = om.MMatrix()
+        om.MScriptUtil.createMatrixFromList( (avgI.x, avgI.y, avgI.z, 0, avgJ.x, avgJ.y, avgJ.z, 0, avgK.x, avgK.y, avgK.z, 0, o.x, o.y, o.z, 0), matrix)
 
         # translate points HERE
         for index in sectionIndices[section]:       # error when using a pointList with an even number of elements (-1 : odd number of sections)
@@ -79,21 +83,19 @@ def pointNoodler(pointList):
             noodlePoints.set(p * matrix, index)
 
         # save old matrix data for multiplying next step
-        oldMatrix = matrix
+        oldI = i
+        oldJ = j
+        oldK = k
 
-    # translate final points (cap) HERE    
+    # translate final points (cap) HERE   
+    o = pointList[numSections]              
+    i = oldI
+    u = om.MVector(0, 1, 0)                  
+    k = i ^ u
+    j = k ^ i     
+    om.MScriptUtil.createMatrixFromList( (i.x, i.y, i.z, 0, j.x, j.y, j.z, 0, k.x, k.y, k.z, 0, o.x, o.y, o.z, 0), matrix) 
+
     for index in sectionIndices[numSections]:     
-        o = pointList[numSections]              
-        i = om.MVector (pointList[numSections])          # no more +1 since final section  
-        i.normalize()                 
-        u = om.MVector(0, 1, 0)                  
-        k = i ^ u
-        j = k ^ i         
-
-        # plugs in all the values from vectors/points and generates a 4x4 matrix
-        matrix = om.MMatrix()
-        om.MScriptUtil.createMatrixFromList( (i.x, i.y, i.z, 0, j.x, j.y, j.z, 0, k.x, k.y, k.z, 0, o.x, o.y, o.z, 0), matrix)           
-
         p = noodlePoints[index]
         p.x = 0 
         noodlePoints.set(p * matrix, index)   
