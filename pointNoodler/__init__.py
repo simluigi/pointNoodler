@@ -2,9 +2,9 @@
 """
 -- pointNoodler plugin --
 Author          : Sim Luigi
-Last Modified   : 2020.10.15
+Last Modified   : 2020.10.16
 
-End goal is to make a plugin that generates a 'noodle' (thin cylinder) that traverses any number of given points.
+End goal is to make a plugin that generates a 'noodle' (cylinder) that traverses any number of given points.
    (noodles sounds more fun than polyCylinder, right?) 
 
 Benchmarks:
@@ -14,32 +14,34 @@ Benchmarks:
 -Average out vertex data for smoother segments.             (complete as of 2020.10.15)
 -Extract selected edges (kMeshEdgeComponent)                (complete as of 2020.10.15)
 -Store selected edge/s' data (MFnSingleIndexedComponent)    (complete as of 2020.10.15) 
--Extract points from edge data                              (in progress as of 2020.10.15)
 
+-Extract points from edge data                              (needs revisions as of 2020.10.16)  -> getPointListFromEdges()
+-Delete duplicate points                                    (needs revisions as of 2020.10.16)  -> removeDuplicatePoints()
+
+-Add radius of 'noodle' as argument to be passed            (complete as of 2020.10.16)
+
+-Implement base pointNoodler()                              (needs revisions as of 2020.10.16)
+ * revert argument type to list instead of MPointArray
+ * instead of MItMeshEdge, use om.MFnMesh(dagPath)
+ * currently only works if points are in sequence on the X-axis
 """
+
 import maya.cmds as cmds
 import maya.OpenMaya as om
 import pprint
 
 # removing all other arguments until I can get it right and then understand the meaning & implementation of the original arguments (upVecList, parent)
-def pointNoodler(pointList):    
+def pointNoodler(pointList, radius, upVecList=None):    
 
     # error handling: check if there are enough points to make at least 1 section
-    if len(pointList) -1 < 2:
+    if pointList.length() -1 < 2:
         raise Exception ("Need at least 2 points to perform pointNoodler!")
     
-    numSections = len(pointList) -1        # -1 : minus the cap
+    numSections = pointList.length() -1        # -1 : minus the cap
     mod = float( numSections / 2.0 ) 
 
-    # getting edges from selected data and storing as an MFnSingleIndexedComponent object
-    edges = getSelectedEdges()
-
-    # generating pointList from edges
-    edgePoints = om.MPointArray()
-
-
     # creating noodle with appropriate number of sections
-    noodleTr = createNoodle(numSections)                    # noodle Transform
+    noodleTr = createNoodle(numSections, radius)                    # noodle Transform
     noodle = cmds.listRelatives(noodleTr, shapes=1)[0]      # returns the shape under noodleTr
 
     objNoodle = om.MObject()
@@ -70,7 +72,7 @@ def pointNoodler(pointList):
         o = pointList[section]              # maya.OpenMaya.MPoint
         i = pointList[section+1] - o        # maya.OpenMaya.MVector
         i.normalize()                   
-        u = om.MVector(0, 1, 0)             # default to up-Y 
+        u = (upVecList[section] if upVecList is not None else om.MVector(0, 1, 0))      # default to up-Y if no upVector is provided
         k = i ^ u
         j = k ^ i         
 
@@ -120,25 +122,6 @@ def pointNoodler(pointList):
 helper functions
 """
 
-# basic function for getting selected edges' data
-def getSelectedEdges():
-    sel = om.MSelectionList()
-    obj = om.MObject()
-    om.MGlobal.getActiveSelectionList(sel)
-    sel.getDependNode(0, obj)    
-
-    comp = om.MObject()
-    dag = om.MDagPath()
-    sel.getDagPath(0, dag, comp)        # question: dag is not really used, but I don't see a function that just gets component on its own. Why?
-    
-    # error handling: if selected components are edges or not
-    if comp.apiTypeStr() != "kMeshEdgeComponent":
-        raise Exception ("Selected component/s are not of type kMeshEdgeComponent. Are you in edge selection mode and have selected at least 1 edge?")   
-    else:
-        edges = om.MFnSingleIndexedComponent(comp)
-        print ("Number of edges selected: ") + str(edges.elementCount())
-        return edges  
-
 # basic DAG path and Depend Node getter functions
 def getMDagPath(node):
     lst = om.MSelectionList()
@@ -161,19 +144,87 @@ def getMObject(node, obj):
         print ("Unable to get MObject. Have you specified an appropriate node?")
         raise
 
+# basic function for getting pointList from selected edges
+def getPointListFromEdges():
+    sel = om.MSelectionList()
+    obj = om.MObject()
+    om.MGlobal.getActiveSelectionList(sel)
+    sel.getDependNode(0, obj)    
+
+    comp = om.MObject()
+    dag = om.MDagPath()
+    sel.getDagPath(0, dag, comp)
+    
+    # error handling: if selected components are edges or not
+    if comp.apiTypeStr() != "kMeshEdgeComponent":
+        raise Exception ("Selected component/s are not of type kMeshEdgeComponent. Are you in edge selection mode and have selected at least 1 edge?")   
+    else:
+        edges = om.MFnSingleIndexedComponent(comp)
+        edgeCount = edges.elementCount()        
+        print ("Number of edges selected: ") + str(edgeCount)
+
+    # MItMeshEdge implementation
+    pointList = om.MPointArray()
+    edgeIndices = om.MIntArray()
+    edges.getElements(edgeIndices)
+    print "edge Indices: " + str(edgeIndices)
+        
+    edgeIt = om.MItMeshEdge(obj)
+    while not edgeIt.isDone():
+        for count in xrange(edgeCount):
+            if edgeIt.index() == edges.element(count):
+                pointList.append(edgeIt.point(0))
+                pointList.append(edgeIt.point(1))
+        edgeIt.next()
+
+    # return resulting pointList after eliminating duplicate points
+    removeDuplicatePoints(pointList)
+    return pointList
+        
+# remove duplicate points (for now, assuming points are selected in sequence)
+def removeDuplicatePoints(pointList):
+    len = pointList.length()
+    removeList = om.MIntArray()  
+
+    # compare if current point and next point are the same (except on first and last point)
+    for index in xrange(len):
+        if index > 1 and index < pointList.length(): 
+
+            next = index + 1
+            nextX = pointList[next][0]
+            nextY = pointList[next][1]
+            nextZ = pointList[next][2]
+            
+            X = pointList[index][0]
+            Y = pointList[index][1]
+            Z = pointList[index][2]
+            
+            # if they are the same point, add the previous point to the list of points to be removed
+            if X == nextX and Y == nextY and Z == nextZ:
+                print "point # " + str(index) + " flagged for removal." 
+                removeList.append(index)
+
+    # finally, remove points to be removed
+    rlen = removeList.length()
+    for index in xrange(rlen):
+        pointList.remove(removeList[index])
+        print "point removed at coordinates " + str(pointList[index][0]) + ", " + str(pointList[index][1]) + ", " + str(pointList[index][2]) 
+
+# print matrix contents for debugging
 def printMatrix(matrix):
     result = '% .06f, % .06f, % .06f, % .06f,\n% .06f, % .06f, % .06f, % .06f,\n% .06f, % .06f, % .06f, % .06f,\n% .06f, % .06f, % .06f, % .06f,\n'
     print result % (matrix(0, 0), matrix(0, 1), matrix(0, 2), matrix(0, 3), matrix(1, 0), matrix(1, 1), matrix(1, 2), matrix(1, 3), matrix(2, 0), matrix(2, 1), matrix(2, 2), matrix(2, 3), matrix(3, 0), matrix(3, 1), matrix(3, 2), matrix(3, 3))
 
+# delete existing noodles(cylinders)
 def deleteNoodles():
     """Deletes existing "cylinder"/s (if any)"""
     noodleList = cmds.ls('pNoodle*')     
     if len(noodleList) > 0:               
         cmds.delete (noodleList)      
 
-# 2020.10.09: removed origin offset, relegated to transform matrix in edgeMesher
-def createNoodle(numSections):
+# create base noodle (cylinder) with arguments numSections (each section with a unit length of 1) and rad (cylinder radius)
+def createNoodle(numSections, rad):
     """Creates the base cylinder. Accepts numSections.  Set height of each section as 1, thus making height = y-subdivisions = numSections."""
-    result = cmds.polyCylinder( radius = 0.1, axis = [1, 0, 0], height = numSections , sy = numSections, name = 'pNoodle#' )
+    result = cmds.polyCylinder( radius = rad, axis = [1, 0, 0], height = numSections , sy = numSections, name = 'pNoodle#' )
     print 'result: ' + str( result )
     return result
