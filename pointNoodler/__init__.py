@@ -1,8 +1,7 @@
-
 """
 -- pointNoodler plugin --
 Author          : Sim Luigi
-Last Modified   : 2020.10.16
+Last xOffsetified   : 2020.10.19
 
 End goal is to make a plugin that generates a 'noodle' (cylinder) that traverses any number of given points.
    (noodles sounds more fun than polyCylinder, right?) 
@@ -14,35 +13,39 @@ Benchmarks:
 -Average out vertex data for smoother segments.             (complete as of 2020.10.15)
 -Extract selected edges (kMeshEdgeComponent)                (complete as of 2020.10.15)
 -Store selected edge/s' data (MFnSingleIndexedComponent)    (complete as of 2020.10.15) 
-
--Extract points from edge data                              (needs revisions as of 2020.10.16)  -> getPointListFromEdges()
--Delete duplicate points                                    (needs revisions as of 2020.10.16)  -> removeDuplicatePoints()
-
 -Add radius of 'noodle' as argument to be passed            (complete as of 2020.10.16)
 
--Implement base pointNoodler()                              (needs revisions as of 2020.10.16)
- * revert argument type to list instead of MPointArray
- * instead of MItMeshEdge, use om.MFnMesh(dagPath)
- * currently only works if points are in sequence on the X-axis
+-Extract points from edge data                              (complete as of 2020.10.19)     
+    * getPointListFromEdges(), without using MItMeshEdge
+    * revert pointList argument to list type (previously converted to MPointArray)
+
+-Implement base pointNoodler()                              (incomplete as of 2020.10.19)
+    * separation of pointList into separate noodles if the edges are not conected
+    
+-Get the upVecList                                          (incomplete as of 2020.10.19)
+    * separate function (
+        >> lookAt ^ world up vector (0, 1, 0) = right vector
+        >> lookAt ^ right vector = up vector
+        >> normalize after
+
 """
 
 import maya.cmds as cmds
 import maya.OpenMaya as om
-import pprint
 
 # removing all other arguments until I can get it right and then understand the meaning & implementation of the original arguments (upVecList, parent)
 def pointNoodler(pointList, radius, upVecList=None):    
 
     # error handling: check if there are enough points to make at least 1 section
-    if pointList.length() -1 < 2:
+    if len(pointList) -1 < 2:
         raise Exception ("Need at least 2 points to perform pointNoodler!")
     
-    numSections = pointList.length() -1        # -1 : minus the cap
-    mod = float( numSections / 2.0 ) 
+    numSections = len(pointList) -1        # -1 : minus the cap
+    xOffset = float(numSections / 2.0) 
 
     # creating noodle with appropriate number of sections
-    noodleTr = createNoodle(numSections, radius)                    # noodle Transform
-    noodle = cmds.listRelatives(noodleTr, shapes=1)[0]      # returns the shape under noodleTr
+    noodleTransform = createNoodle(numSections, radius)                    # noodle Transform
+    noodle = cmds.listRelatives(noodleTransform, shapes = 1)[0]            # returns the shape under noodleTransform
 
     objNoodle = om.MObject()
     getMObject(noodle, objNoodle)
@@ -51,14 +54,14 @@ def pointNoodler(pointList, radius, upVecList=None):
     # store all vertices and group by corresponding X value (consider making into a function)
     sectionIndices = {} 
 
-    vit = om.MItMeshVertex(objNoodle)       # iterator of all vertices in mesh
-    while not vit.isDone():
-        p = vit.position()                  # position of vertex
-        k = p.x + mod                       # rounds p to the nearest decimal digit and converts to int format
-        lst = sectionIndices.get(k, [])     # add list to key(all points that share the same x-axis)
-        lst.append(vit.index())             # appends index of vit to the list
-        sectionIndices[k] = lst             # sets this list as the value of sectionIndices[with index k]
-        vit.next()                          # moves to the next element in the list
+    noodleVertexIterator = om.MItMeshVertex(objNoodle)       # iterator of all vertices in mesh
+    while not noodleVertexIterator.isDone():
+        p = noodleVertexIterator.position()                  # position of vertex
+        xKey = p.x + xOffset                                 # rounds p to the nearest decimal digit and converts to int format
+        lst = sectionIndices.get(xKey, [])                   # add list to key(all points that share the same x-axis)
+        lst.append(noodleVertexIterator.index())             # appends index of noodleVertexIterator to the list
+        sectionIndices[xKey] = lst                           # sets this list as the value of sectionIndices[with index xKey]
+        noodleVertexIterator.next()                          # moves to the next element in the list
 
     noodlePoints = om.MPointArray()
     meshNoodle.getPoints(noodlePoints)      # gets all the points in the noodle -mesh- (not node or object) and assigns to noodlePoints(type MPointArray)
@@ -72,9 +75,9 @@ def pointNoodler(pointList, radius, upVecList=None):
         o = pointList[section]              # maya.OpenMaya.MPoint
         i = pointList[section+1] - o        # maya.OpenMaya.MVector
         i.normalize()                   
-        u = (upVecList[section] if upVecList is not None else om.MVector(0, 1, 0))      # default to up-Y if no upVector is provided
-        k = i ^ u
-        j = k ^ i         
+        u = (upVecList[section] if upVecList is not None else om.MVector(0, 1, 0))      # default to world upVector if no upVector is provided
+        k = i ^ u   # forward ^ up
+        j = k ^ i   # 
 
         if section > 0:
             avgI = (i + oldI).normal()
@@ -87,8 +90,7 @@ def pointNoodler(pointList, radius, upVecList=None):
             avgK = k
 
         # plugs in all the values from vectors/points and generates a 4x4 matrix
-        # matrix = om.MMatrix()
-        om.MScriptUtil.createMatrixFromList( (avgI.x, avgI.y, avgI.z, 0, avgJ.x, avgJ.y, avgJ.z, 0, avgK.x, avgK.y, avgK.z, 0, o.x, o.y, o.z, 0), matrix)
+        om.MScriptUtil.createMatrixFromList((avgI.x, avgI.y, avgI.z, 0, avgJ.x, avgJ.y, avgJ.z, 0, avgK.x, avgK.y, avgK.z, 0, o.x, o.y, o.z, 0), matrix)
 
         # translate points HERE
         for index in sectionIndices[section]:       # error when using a pointList with an even number of elements (-1 : odd number of sections)
@@ -107,7 +109,7 @@ def pointNoodler(pointList, radius, upVecList=None):
     u = om.MVector(0, 1, 0)                  
     k = i ^ u
     j = k ^ i     
-    om.MScriptUtil.createMatrixFromList( (i.x, i.y, i.z, 0, j.x, j.y, j.z, 0, k.x, k.y, k.z, 0, o.x, o.y, o.z, 0), matrix) 
+    om.MScriptUtil.createMatrixFromList((i.x, i.y, i.z, 0, j.x, j.y, j.z, 0, k.x, k.y, k.z, 0, o.x, o.y, o.z, 0), matrix) 
 
     for index in sectionIndices[numSections]:     
         p = noodlePoints[index]
@@ -144,71 +146,58 @@ def getMObject(node, obj):
         print ("Unable to get MObject. Have you specified an appropriate node?")
         raise
 
-# basic function for getting pointList from selected edges
+# function for getting pointList from selected edges
 def getPointListFromEdges():
-    sel = om.MSelectionList()
-    obj = om.MObject()
-    om.MGlobal.getActiveSelectionList(sel)
-    sel.getDependNode(0, obj)    
+    edgeSelection = om.MSelectionList()
+    edgeObject = om.MObject()
+    om.MGlobal.getActiveSelectionList(edgeSelection)
 
-    comp = om.MObject()
-    dag = om.MDagPath()
-    sel.getDagPath(0, dag, comp)
+    # error handling: no selection
+    if edgeSelection.isEmpty():
+        raise Exception ("Nothing is selected!")
+
+    edgeSelection.getDependNode(0, edgeObject)    
+    edgeComponent = om.MObject()
+    edgeDagPath = om.MDagPath()
+    edgeSelection.getDagPath(0, edgeDagPath, edgeComponent)
     
-    # error handling: if selected components are edges or not
-    if comp.apiTypeStr() != "kMeshEdgeComponent":
-        raise Exception ("Selected component/s are not of type kMeshEdgeComponent. Are you in edge selection mode and have selected at least 1 edge?")   
+    # error handling: if selected components are not edges
+    if edgeComponent.apiTypeStr() != "kMeshEdgeComponent":
+        raise Exception ("Selected component/s are not of type kMeshEdgeComponent. Are you in edge selection xOffsete and have selected at least 1 edge?")   
     else:
-        edges = om.MFnSingleIndexedComponent(comp)
-        edgeCount = edges.elementCount()        
+        edgeSIComponent = om.MFnSingleIndexedComponent(edgeComponent)
+        edgeCount = edgeSIComponent.elementCount()        
         print ("Number of edges selected: ") + str(edgeCount)
 
-    # MItMeshEdge implementation
-    pointList = om.MPointArray()
-    edgeIndices = om.MIntArray()
-    edges.getElements(edgeIndices)
-    print "edge Indices: " + str(edgeIndices)
-        
-    edgeIt = om.MItMeshEdge(obj)
-    while not edgeIt.isDone():
-        for count in xrange(edgeCount):
-            if edgeIt.index() == edges.element(count):
-                pointList.append(edgeIt.point(0))
-                pointList.append(edgeIt.point(1))
-        edgeIt.next()
+    pointList = []    
+    edgeVertexList = []                            
+    edgeIndices = om.MIntArray() 
+    edgeSIComponent.getElements(edgeIndices)       # returns all indices of selected edges
+    
+    # MFnMesh implementation
+    edgeMesh = om.MFnMesh(edgeDagPath) 
+    edgeUtil = om.MScriptUtil()
+    edgeVertices = edgeUtil.asInt2Ptr()
+    for index in xrange(edgeCount):
+        edgeMesh.getEdgeVertices(edgeIndices[index], edgeVertices)
+        p0 = edgeUtil.getInt2ArrayItem(edgeVertices, 0, 0)
+        p1 = edgeUtil.getInt2ArrayItem(edgeVertices, 0, 1)
 
-    # return resulting pointList after eliminating duplicate points
-    removeDuplicatePoints(pointList)
+        # filter algorithm here (do not append duplicates)
+        if not p0 in edgeVertexList:    
+            edgeVertexList.append(p0)
+        if not p1 in edgeVertexList:
+            edgeVertexList.append(p1)
+
+    edgeVertexList.sort()   # sort indices in ascending order
+
+    for index in xrange(len(edgeVertexList)):
+        point = om.MPoint()
+        edgeMesh.getPoint(edgeVertexList[index], point)  
+        pointList.append(point)
+        print "point # " + str(edgeVertexList[index]) + " appended to pointList with coordinates X: " + str(point[0]) + " Y: " + str(point[1]) + " Z: " + str(point[2])
+
     return pointList
-        
-# remove duplicate points (for now, assuming points are selected in sequence)
-def removeDuplicatePoints(pointList):
-    len = pointList.length()
-    removeList = om.MIntArray()  
-
-    # compare if current point and next point are the same (except on first and last point)
-    for index in xrange(len):
-        if index > 1 and index < pointList.length(): 
-
-            next = index + 1
-            nextX = pointList[next][0]
-            nextY = pointList[next][1]
-            nextZ = pointList[next][2]
-            
-            X = pointList[index][0]
-            Y = pointList[index][1]
-            Z = pointList[index][2]
-            
-            # if they are the same point, add the previous point to the list of points to be removed
-            if X == nextX and Y == nextY and Z == nextZ:
-                print "point # " + str(index) + " flagged for removal." 
-                removeList.append(index)
-
-    # finally, remove points to be removed
-    rlen = removeList.length()
-    for index in xrange(rlen):
-        pointList.remove(removeList[index])
-        print "point removed at coordinates " + str(pointList[index][0]) + ", " + str(pointList[index][1]) + ", " + str(pointList[index][2]) 
 
 # print matrix contents for debugging
 def printMatrix(matrix):
