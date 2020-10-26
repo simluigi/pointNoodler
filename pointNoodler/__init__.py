@@ -15,14 +15,13 @@ Benchmarks:
 -Store selected edge/s' data (MFnSingleIndexedComponent)    (complete as of 2020.10.15) 
 -Add radius of 'noodle' as argument to be passed            (complete as of 2020.10.16)
 -Implement base pointNoodler() with multiple cylinders      (complete as of 2020.10.21)
-
--Extract points from edge data                              (needs revision as of 2020.10.21)
--Segregation of edge connections into respective lists      (needs revision as of 2020.10.21)  
-
--Implement pointNoodler() to work across multiple DAG nodes (incomplete as of 2020.10.23)
--Parenting the noodles properly (to align with parent)      (complete as of 2020.10.23)  * inquire about "cannot parent components or objects in the underworld"    
+-Extract points from edge data                              (complete as of 2020.10.21)
+-Parenting the noodles properly (to align with parent)      (complete as of 2020.10.23)  * inquire about "cannot parent components or objects in the underworld"
+-Segregation of edge connections into respective lists      (in progress as of 2020.10.26) 
+    Remaining Tasks:
+    * combining connected edge lists that were not connected during generation
+    * work across multiple DAG nodes
 -Get the upVecList                                          (incomplete as of 2020.10.23)
-
 
 """
 import maya.cmds as cmds
@@ -184,12 +183,20 @@ def getEdgeCount(edgeComponent):
         print ("Number of edges selected: ") + str(edgeCount)
         return edgeCount
 
-# 2020.10.23: Incomplete. Works sometimes - issue with Tail variable not being updated (see line 210)
+"""
+2020.10.26: 
+List segregation more or less complete.
+Remaining task is to combine lists that were not connected during generation.
+Current approach is to traverse the segregated list and compare their head/tail index values
+and then add respective points if a match is found.  However, algorithm is not complete.
+"""
+
 # segregate point indices into respective lists based on edge connection
 def getSegregatedPointIndices(edgeMesh, edgeIndices, edgeCount):    
     edgeUtil = om.MScriptUtil()
     edgeVertices = edgeUtil.asInt2Ptr()
     segregatedList = []                     # entry format: [[connected Edge/s], [connected Points]]
+    segmentCount = 0                        # final number of point lists
 
     # consolidated into one for loop (split as you go). 
     # Take into account every possible case i.e. point lists connected to each other, multiple meshes    
@@ -204,6 +211,7 @@ def getSegregatedPointIndices(edgeMesh, edgeIndices, edgeCount):
 
         if index == 0:
             segregatedList.append([[edgeID], [inP0, inP1]])     # automatically add first entry to segregated list
+            segmentCount += 1
         else:
             for current in xrange(len(segregatedList)):
 
@@ -252,25 +260,52 @@ def getSegregatedPointIndices(edgeMesh, edgeIndices, edgeCount):
                                             else:
                                                 if inP0 == currentPoints[TSection]:
                                                     segregatedList.append([[edgeID], [inP0, inP1]])     # add new point list along T-section starting with connected point p0
+                                                    segmentCount += 1
                                                     print "new T-section cylinder from point p0."
                                                     break
                                                 else:
                                                     if inP1 == currentPoints[TSection]:
                                                         segregatedList.append([[edgeID], [inP1, inP0]]) # add new point list along T-section starting with connected point p1
+                                                        segmentCount += 1
                                                         print "new T-section cylinder from point p1."
                                                         break
             # case 6: no connected points
             if isConnected == False:
                 segregatedList.append([[edgeID], [inP0, inP1]])
+                segmentCount += 1
                 print "No connections. Creating new cylinder."                            
-                   
-    # INCOMPLETE: add algorithm to connect previously unconnected lists that have now been connected
+
+    """
+     INCOMPLETE: add algorithm to connect previously unconnected lists that have now been connected.  Currently stuck here.
+    """               
+    for current in xrange(segmentCount):
+        numPoints = len(segregatedList[current][1])                 # number of points in current list (to be used as xrange in case of match)
+        pointTailIndex = len(segregatedList[current][1]) - 1        # index of the tail (last value) of the current point list to be compared to
+        headPoint = segregatedList[current][1][0]                   # current head point (type: int)
+        tailPoint = segregatedList[current][1][pointTailIndex]      # current tail point (type: int)        
+        start = current + 1
+
+        for index in xrange(numPoints - 1):
+            print index
+            nextPointTailIndex = len(segregatedList[index][1]) - 1        # index of the tail (last value) of the next point list to be compared to
+            nextHeadPoint = segregatedList[index][1][0]                   # next head point (type: int)
+            nextTailPoint = segregatedList[index][1][nextPointTailIndex]  # next tail point (type: int)
+                                   
+            if headPoint == nextHeadPoint:                                              # case 1: p0 matches with next p0
+                for i in xrange(index, numPoints - 1):                                   # insert points (except connected one) into head of existing list in reverse order
+                    segregatedList[index][1].insert(0, segregatedList[index][1][i])
+                break
+            else:
+                if headPoint == nextTailPoint:                                              # case 2: p0 matches with next p1
+                    for i in xrange(index, numPoints - 1):                                   # append points (except connected one) to existing list
+                        segregatedList[index][1].append(segregatedList[index][1][i])
+                    break
+
 
     print segregatedList     
     return segregatedList   # list of lists of each noodle's point indices
 
 # create master list of all points grouped by passed segregatedList
-# must rewrite due to changed argument format from getSegregatedPointIndices
 def getPointMasterList(edgeMesh, segregatedList):
     masterList = []
     for index in xrange(len(segregatedList)):        
@@ -283,6 +318,7 @@ def getPointMasterList(edgeMesh, segregatedList):
 
     return masterList   # list of lists of MPoints segregated into their own divisions
 
+# INCOMPLETE
 # get the upVector list
 def getUpVectorList():
     0
