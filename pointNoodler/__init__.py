@@ -1,7 +1,7 @@
 """
 -- pointNoodler plugin --
 Author          : Sim Luigi
-Last xOffsetified   : 2020.10.26
+Last xOffsetified   : 2020.10.27
 
 End goal is to make a plugin that generates a 'noodle' (cylinder) that traverses any number of given points.
    (noodles sounds more fun than polyCylinder, right?) 
@@ -151,17 +151,40 @@ def getPointListFromEdges():
     if edgeSelection.isEmpty():
         raise Exception ("Nothing is selected!")
 
-    nodeCount = edgeSelection.length()          # number of nodes where edges are selected
+    indexCount = edgeSelection.length()   
     masterList = []
-    for node in xrange(nodeCount):              # perform point selection per node
+
+    """
+    JUST MAKING IT WORK IS NOT ENOUGH
+    function must think about all ins and outs, all use cases (what the user will do with your tool, you will never anticipate)
+    assumptions are visible in naming conventions (you're assuming the selection is a node, etc)
+    gives useful feedback, etc
+
+    change node with index; misleading (node - dependNode, index - more suitable)
+    Do error handling - check if valid dagPath, then check if mesh is valid (NURBS, etc), check if in object mode, etc
+    Stop making assumptions regarding input types
+
+    dont stop a program for a single exception if it doesn't warrant an error (try-catch)
+    robust: tell people why plugin is failing all the time
+    """
+
+    # use your getMDagPath and getMObject here!!!
+
+    for index in xrange(indexCount):              # perform point selection per index 
         edgeComponent = om.MObject()
         edgeDagPath = om.MDagPath()
-        edgeSelection.getDependNode(node, edgeObject)                   # node (usually 0) -> mesh count for extra mesh (extra loop to check for mesh count) 
-        edgeSelection.getDagPath(node, edgeDagPath, edgeComponent)
-        edgeMesh = om.MFnMesh(edgeDagPath) 
-        edgeCount = getEdgeCount(edgeComponent)        # user-defined, see helper functions
+        edgeSelection.getDependNode(index, edgeObject)                 
+        edgeSelection.getDagPath(index, edgeDagPath, edgeComponent)
 
+        # error handling
+        if not edgeDagPath.isValid():
+            raise Exception ("Invalid DAG Path!")   # expound on this later
+        if edgeComponent.apiTypeStr() != "kMeshEdgeComponent":
+            raise Exception ("Selected component/s are not of type kMeshEdgeComponent. Are you in edge selection xOffsete and have selected at least 1 edge?")   
+
+        edgeMesh = om.MFnMesh(edgeDagPath)   
         edgeSIComponent = om.MFnSingleIndexedComponent(edgeComponent)
+        edgeCount = edgeSIComponent.elementCount() 
         edgeIndices = om.MIntArray() 
         edgeSIComponent.getElements(edgeIndices)        # returns all indices of selected edges
     
@@ -171,17 +194,6 @@ def getPointListFromEdges():
 
     return masterList   
 
-# get edge count
-def getEdgeCount(edgeComponent):
-
-    # error handling: if selected components are not edges
-    if edgeComponent.apiTypeStr() != "kMeshEdgeComponent":
-        raise Exception ("Selected component/s are not of type kMeshEdgeComponent. Are you in edge selection xOffsete and have selected at least 1 edge?")   # do error checking on dagPath as well
-    else:
-        edgeSIComponent = om.MFnSingleIndexedComponent(edgeComponent)
-        edgeCount = edgeSIComponent.elementCount()        
-        print ("Number of edges selected: ") + str(edgeCount)
-        return edgeCount
 
 """
 2020.10.26: 
@@ -196,7 +208,8 @@ def getSegregatedPointIndices(edgeMesh, edgeIndices, edgeCount):
     edgeUtil = om.MScriptUtil()
     edgeVertices = edgeUtil.asInt2Ptr()
     segregatedList = []                     # entry format: [[connected Edge/s], [connected Points]]
-    segmentCount = 0                        # final number of point lists
+    listCount = 0                           # final number of point lists
+    pointNrms = {}
 
     # consolidated into one for loop (split as you go). 
     # Take into account every possible case i.e. point lists connected to each other, multiple meshes    
@@ -205,105 +218,133 @@ def getSegregatedPointIndices(edgeMesh, edgeIndices, edgeCount):
         edgeMesh.getEdgeVertices(edgeID, edgeVertices)
         inP0 = edgeUtil.getInt2ArrayItem(edgeVertices, 0, 0)    # p0 index
         inP1 = edgeUtil.getInt2ArrayItem(edgeVertices, 0, 1)    # p1 index
-        isConnected = False                                     # connected flag; will remain false if no conditions are met    
+
+        if not inP0 in pointNrms:
+            N = om.MVector()
+            edgeMesh.getVertexNormal(inP0, True, N)
+            pointNrms[inP0] = N
+        if not inP1 in pointNrms:
+            N = om.MVector()
+            edgeMesh.getVertexNormal(inP1, True, N)
+            pointNrms[inP1] = N
 
         print "Current Edge ID " + str(edgeID) + " at Index: " + str(index)
 
-        if index == 0:
-            segregatedList.append([[edgeID], [inP0, inP1]])     # automatically add first entry to segregated list
-            segmentCount += 1
+        # if edge exists anywhere inside any of the lists so far, skip to next edge
+        for cidx in xrange(len(segregatedList)):
+            if edgeID in segregatedList[cidx][0]:
+                break
         else:
             for current in xrange(len(segregatedList)):
-
                 # helper local variables
                 pointTailIndex = len(segregatedList[current][1]) - 1        # index of the tail (last value) of the current point list to be compared to
                 headPoint = segregatedList[current][1][0]                   # current head point (type: int)
                 tailPoint = segregatedList[current][1][pointTailIndex]      # current tail point (type: int)
                 currentPoints = segregatedList[current][1]                  # list of all point indices in current list to be compared  (type: list of ints)
                 currentEdgeIndices = segregatedList[current][0]             # list of current edge indices in list to be compared to  (type: list of ints)
-
-                if edgeID in currentEdgeIndices:                            # if same edge already exists in list, ignore
-                    continue
-                else: 
-                    if (inP0 in currentPoints) or (inP1 in currentPoints):      # if incoming p0 or p1 is in currentPoints
-                        isConnected = True                                      # set connected flag to True (one vertex is connected)
-                        
-                        if inP0 == headPoint:                           # case 1: incoming p0 matches head of existing list
-                            currentEdgeIndices.append(edgeID)           # add edgeID to list of connected edges
-                            currentPoints.insert(0, inP1)               # insert partner to head (inP1, head, ...) - p1 is now head of list
-                            print "Connection found at point p0 to head."
-                            break
-                        else:
-                            if inP1 == headPoint:                           # case 2: incoming p1 matches head of existing list
-                                currentEdgeIndices.append(edgeID)           # add edgeID to list of connected edges
-                                currentPoints.insert(0, inP0)               # insert partner to head (inP0, head, ...) - p0 is now head of list
-                                print "Connection found at point p1 to head."
-                                break
-                            else:
-                                if inP0 == tailPoint:                       # case 3: incoming p0 matches tail of existing list
-                                    currentEdgeIndices.append(edgeID)       # add edgeID to list of connected edges
-                                    currentPoints.append(inP1)              # insert partner to tail (..., tail, p1) - p1 is now tail of list
-                                    print "Connection found at point p0 to tail."
-                                    break                               
-                                else:
-                                    if inP1 == tailPoint:                       # case 4: incoming p1 matches tail of existing list
-                                        currentEdgeIndices.append(edgeID)       # add edgeID to list of connected edges
-                                        currentPoints.append(inP0)              # insert partner to tail (..., tail, p0) - p0 is now tail of list
-                                        print "Connection found at point p1 to tail."   
-                                        break   
-                                    else:
-                                        
-                                        # case 5: T-section: traverse all the middle points and insert new cylinder there 
-                                        for TSection in xrange(pointTailIndex):
-                                            if TSection == 0:                                           # ignore first index (already compared earlier)
-                                                continue
-                                            else:
-                                                if inP0 == currentPoints[TSection]:
-                                                    segregatedList.append([[edgeID], [inP0, inP1]])     # add new point list along T-section starting with connected point p0
-                                                    segmentCount += 1
-                                                    print "new T-section cylinder from point p0."
-                                                    break
-                                                else:
-                                                    if inP1 == currentPoints[TSection]:
-                                                        segregatedList.append([[edgeID], [inP1, inP0]]) # add new point list along T-section starting with connected point p1
-                                                        segmentCount += 1
-                                                        print "new T-section cylinder from point p1."
-                                                        break
-            # case 6: no connected points
-            if isConnected == False:
-                segregatedList.append([[edgeID], [inP0, inP1]])
-                segmentCount += 1
-                print "No connections. Creating new cylinder."                            
+ 
+                if inP0 == headPoint:                               # case 1: incoming p0 matches head of existing list
+                    currentEdgeIndices.insert(0, edgeID)            # add edgeID to list of connected edges
+                    currentPoints.insert(0, inP1)                   # insert partner to head (inP1, head, ...) - p1 is now head of list
+                    print "Connection found at point p0 to head."
+                    break
+                elif inP1 == headPoint:                             # case 2: incoming p1 matches head of existing list
+                    currentEdgeIndices.insert(0, edgeID)            # add edgeID to list of connected edges
+                    currentPoints.insert(0, inP0)                   # insert partner to head (inP0, head, ...) - p0 is now head of list
+                    print "Connection found at point p1 to head."
+                    break
+                elif inP0 == tailPoint:                             # case 3: incoming p0 matches tail of existing list
+                    currentEdgeIndices.append(edgeID)               # add edgeID to list of connected edges
+                    currentPoints.append(inP1)                      # insert partner to tail (..., tail, p1) - p1 is now tail of list
+                    print "Connection found at point p0 to tail."
+                    break                               
+                elif inP1 == tailPoint:                             # case 4: incoming p1 matches tail of existing list
+                    currentEdgeIndices.append(edgeID)               # add edgeID to list of connected edges
+                    currentPoints.append(inP0)                      # insert partner to tail (..., tail, p0) - p0 is now tail of list
+                    print "Connection found at point p1 to tail."   
+                    break   
+                else:
+                    if inP0 in currentPoints or inP1 in currentPoints:      # case 5: either p1 or p0 is somewhere in the middle of existing list
+                        segregatedList.append([[edgeID], [inP0, inP1]])     # create a new point list entry (as a T-section of the shared point)
+                        listCount += 1
+                        break
+            else:
+                segregatedList.append([[edgeID], [inP0, inP1]])     # case 6: edge's points are not connected anywhere
+                listCount += 1                                   # create a new independent point list entry 
+                print "No connections. Creating new cylinder."
 
     """
-     INCOMPLETE: add algorithm to connect previously unconnected lists that have now been connected.  Currently stuck here.
-    """               
-    for current in xrange(segmentCount):
-        numPoints = len(segregatedList[current][1])                 # number of points in current list (to be used as xrange in case of match)
-        pointTailIndex = len(segregatedList[current][1]) - 1        # index of the tail (last value) of the current point list to be compared to
-        headPoint = segregatedList[current][1][0]                   # current head point (type: int)
-        tailPoint = segregatedList[current][1][pointTailIndex]      # current tail point (type: int)        
-        start = current + 1
+     INCOMPLETE: debugging in progress
+    # """
+    # connecting point lists with shared endpoints
+    outList = segregatedList[:]         
+    outIndex = 0                         
+    compIndex = 0                        
+    listLength = len(outList)
+    print "List Length: " + str(listLength)
 
-        for index in xrange(numPoints - 1):
-            print index
-            nextPointTailIndex = len(segregatedList[index][1]) - 1        # index of the tail (last value) of the next point list to be compared to
-            nextHeadPoint = segregatedList[index][1][0]                   # next head point (type: int)
-            nextTailPoint = segregatedList[index][1][nextPointTailIndex]  # next tail point (type: int)
-                                   
-            if headPoint == nextHeadPoint:                                              # case 1: p0 matches with next p0
-                for i in xrange(index, numPoints - 1):                                   # insert points (except connected one) into head of existing list in reverse order
-                    segregatedList[index][1].insert(0, segregatedList[index][1][i])
+    while outIndex + 1 < listLength:            # skip first entry (no need to compare with itself)
+        # helper variables
+        isMerged = False
+        compIndex = outIndex + 1                # compare current entry to next 
+        outPoints = outList[outIndex][1] 
+        compPoints = outList[compIndex][1]      
+
+        outHead = outList[outIndex][1][0]
+        outTail = outList[outIndex][1][-1]
+        compHead = outList[compIndex][1][0]
+        compTail = outList[compIndex][1][-1]
+
+        # debug
+        print "outHead: " + str(outHead) + ", outTail: " + str(outTail)
+        print "compHead: " + str(compHead) + ", compTail: " + str(compTail)
+
+        while compIndex < listLength:
+            print "outIndex: " + str(outIndex)
+            print "compIndex: " + str(compIndex)
+
+            if outHead == compHead:         # case 1: current head connected to opposing head
+                print "Case 1"
+                compPoints.reverse()
+                outPoints[:0] = compPoints[:-1]
+                print "new points: " + str (outPoints) 
+                isMerged = True
+                break
+            elif outHead == compTail:      # case 2: current head connected to opposing tail      
+                print "Case 2"     
+                outPoints.extend(compPoints[1:])  
+                print "new points: " + str (outPoints) 
+                isMerged = True
+                break
+            elif outTail == compHead:      # case 3: current tail connected to opposing head
+                print "Case 3"
+                outPoints[:0] = compPoints[:-1]
+                print "new points: " + str (outPoints) 
+                isMerged = True
+                break
+
+            elif outTail == compTail:     # case 4: current tail connected to opposing tail
+                print "Case 4"
+                compPoints.reverse()
+                outPoints.extend(compPoints[1:])
+                print "new points: " + str (outPoints) 
+                isMerged = True
                 break
             else:
-                if headPoint == nextTailPoint:                                              # case 2: p0 matches with next p1
-                    for i in xrange(index, numPoints - 1):                                   # append points (except connected one) to existing list
-                        segregatedList[index][1].append(segregatedList[index][1][i])
-                    break
+                compIndex += 1
 
+        if isMerged == True:
+            # listLength = len(outList)
+            listLength -= 1
+            outIndex = 0
+        else:
+            outIndex += 1
 
-    print segregatedList     
-    return segregatedList   # list of lists of each noodle's point indices
+    print "outList: " + str(outList)
+    print "segList: " + str(segregatedList)
+
+    # return outList, pointNrms
+    return segregatedList  # list of lists of each noodle's point indices
 
 # create master list of all points grouped by passed segregatedList
 def getPointMasterList(edgeMesh, segregatedList):
@@ -317,11 +358,6 @@ def getPointMasterList(edgeMesh, segregatedList):
         masterList.append(pointList)
 
     return masterList   # list of lists of MPoints segregated into their own divisions
-
-# INCOMPLETE
-# get the upVector list
-def getUpVectorList():
-    0
 
 # print matrix contents for debugging
 def printMatrix(matrix):
