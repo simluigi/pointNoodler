@@ -1,7 +1,7 @@
 """
 -- pointNoodler plugin --
 Author          : Sim Luigi
-Last xOffsetified   : 2020.10.27
+Last xOffsetified   : 2020.10.28
 
 End goal is to make a plugin that generates a 'noodle' (cylinder) that traverses any number of given points.
    (noodles sounds more fun than polyCylinder, right?) 
@@ -20,14 +20,15 @@ Benchmarks:
 -Segregation of edge pointrconnections into lists           (in progress as of 2020.10.28) 
     Remaining Tasks:
     * combining connected edge lists that were not connected during generation (complete as of 2020.10.28)
-    * work across multiple DAG nodes
--Get the upVecList                                          (in progress as of 2020.10.28 - included in segregatePointIndices())
+    * work across multiple meshes (in progress)
+-Get the upVecList                                          (in progress as of 2020.10.28 - functionality currently included in segregatePointIndices())
 
 """
 import maya.cmds as cmds
 import maya.OpenMaya as om
 
 # removing all other arguments until I can get it right and then understand the meaning & implementation of the original arguments (upVecList, parent)
+# def pointNoodler(index, pointList, radius, parent, upVectorList=None):
 def pointNoodler(pointList, radius, parent, upVectorList=None):
 
     # error handling 1: check if there are enough points to make at least 1 section
@@ -128,13 +129,23 @@ helper functions
 """
 
 # basic DAG path and Depend Node getter functions
-def getMDagPath(node):
-    lst = om.MSelectionList()
-    lst.add(node)
+# def getMDagPath(node):
+#     lst = om.MSelectionList()
+#     lst.add(node)
+#     dagPath = om.MDagPath()
+#     comp = om.MObject()
+#     try:
+#         lst.getDagPath(0, dagPath, comp)
+#         return dagPath, comp
+#     except:
+#         print ("Unable to get MDagPath. Have you specified an appropriate node?")
+#         raise
+
+def getMDagPath(index, sel):
     dagPath = om.MDagPath()
     comp = om.MObject()
     try:
-        lst.getDagPath(0, dagPath, comp)
+        sel.getDagPath(index, dagPath, comp)
         return dagPath, comp
     except:
         print ("Unable to get MDagPath. Have you specified an appropriate node?")
@@ -149,81 +160,60 @@ def getMObject(node, obj):
         print ("Unable to get MObject. Have you specified an appropriate node?")
         raise
 
-def getParentNameFromSelection():
-    lst = om.MSelectionList()
-    om.MGlobal.getActiveSelectionList(lst)
-    dagPath = om.MDagPath()
-    comp = om.MObject()
-    try:
-        lst.getDagPath(0, dagPath, comp)
-        parentName = dagPath.fullPathName()
-        return parentName
-    except:
-        print ("Unable to get parent name. Have you specified an appropriate node?")
-        raise
-
-# def getObjectFromSelection():
-#     lst = om.MSelectionList()
-#     om.MGlobal.getActiveSelectionList(lst)
-#     obj = om.MObject()    
+# def getMObject(index, sel):
 #     try:
-#         lst.getDependNode(0, obj)
+#         obj = om.MObject()
+#         sel.getDependNode(index, obj)
 #         return obj
 #     except:
 #         print ("Unable to get MObject. Have you specified an appropriate node?")
 #         raise
 
+def getParentNameFromSelection(index, sel):
+    dagPath = om.MDagPath()
+    comp = om.MObject()
+    try:
+        sel.getDagPath(index, dagPath, comp)
+        parentName = dagPath.fullPathName()
+        return parentName
+    except:
+        print ("Unable to get parent name from selection. Have you selected an appropriate node?")
+        raise
+
 # function for getting pointList/s from selected edges, segregated into their corresponding segments if edges are not connected
-def getPointListFromEdges():
+# called once per mesh, with index as argument
+def getPointListFromEdges(index):
     edgeSelection = om.MSelectionList()
-    edgeObject = om.MObject()
+
     om.MGlobal.getActiveSelectionList(edgeSelection)
 
     # error handling: no selection
     if edgeSelection.isEmpty():
         raise Exception ("Nothing is selected!")
 
-    indexCount = edgeSelection.length()  # this does not return the proper value which is # of meshes. revise
-    print "edgeSelection.length = " + str(indexCount)
+    edgeDagPath, edgeComponent = getMDagPath(index, edgeSelection)
+    edgeObject = om.MObject()
+    edgeSelection.getDependNode(index, edgeObject)   
+    # edgeObject = getMObject(index, edgeSelection)
+
+    # error handling: invalid selections
+    if not edgeDagPath.isValid():
+        raise Exception ("Invalid DAG Path. Have you selected an appropriate node?")   # expound on this later
+    if edgeComponent.apiTypeStr() != "kMeshEdgeComponent":
+        raise Exception ("Selected component/s are not of type kMeshEdgeComponent. Are you in edge selection xOffsete and have selected at least 1 edge?") 
+    if edgeObject.isNull():
+        raise Exception ("Resulting MObject returned a null value.  Have you selected an appropriate node?")
+
     masterList = []
+    edgeMesh = om.MFnMesh(edgeDagPath)  
+    edgeSIComponent = om.MFnSingleIndexedComponent(edgeComponent)
+    edgeCount = edgeSIComponent.elementCount() 
+    edgeIndices = om.MIntArray() 
+    edgeSIComponent.getElements(edgeIndices)        # returns all indices of selected edges
 
-    """
-    JUST MAKING IT WORK IS NOT ENOUGH
-    function must think about all ins and outs, all use cases (what the user will do with your tool, you will never anticipate)
-    assumptions are visible in naming conventions (you're assuming the selection is a node, etc)
-    gives useful feedback, etc
-
-    change node with index; misleading (node - dependNode, index - more suitable)
-    Do error handling - check if valid dagPath, then check if mesh is valid (NURBS, etc), check if in object mode, etc
-    Stop making assumptions regarding input types
-
-    dont stop a program for a single exception if it doesn't warrant an error (try-catch)
-    robust: tell people why plugin is failing all the time
-    """
-
-    # use your getMDagPath and getMObject here!!!
-
-    for index in xrange(indexCount):              # perform point selection per index 
-        edgeComponent = om.MObject()
-        edgeDagPath = om.MDagPath()
-        edgeSelection.getDependNode(index, edgeObject)                 
-        edgeSelection.getDagPath(index, edgeDagPath, edgeComponent)
-
-        # error handling
-        if not edgeDagPath.isValid():
-            raise Exception ("Invalid DAG Path!")   # expound on this later
-        if edgeComponent.apiTypeStr() != "kMeshEdgeComponent":
-            raise Exception ("Selected component/s are not of type kMeshEdgeComponent. Are you in edge selection xOffsete and have selected at least 1 edge?")   
-
-        edgeMesh = om.MFnMesh(edgeDagPath)  
-        edgeSIComponent = om.MFnSingleIndexedComponent(edgeComponent)
-        edgeCount = edgeSIComponent.elementCount() 
-        edgeIndices = om.MIntArray() 
-        edgeSIComponent.getElements(edgeIndices)        # returns all indices of selected edges
-    
-        segregatedList = getSegregatedPointIndices(edgeMesh, edgeIndices, edgeCount)    # get a list of lists with edgeIndices grouped by connected edges
-        nodePointList = getPointMasterList(edgeMesh, segregatedList)
-        masterList.append(nodePointList)                                                # list of lists of MPoints grouped by segregatedList
+    segregatedList = getSegregatedPointIndices(edgeMesh, edgeIndices, edgeCount)    # get a list of lists with edgeIndices grouped by connected edges
+    nodePointList = getPointMasterList(edgeMesh, segregatedList)
+    masterList.append(nodePointList)                                                # list of lists of MPoints grouped by segregatedList
 
     return masterList
 
