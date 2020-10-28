@@ -149,6 +149,30 @@ def getMObject(node, obj):
         print ("Unable to get MObject. Have you specified an appropriate node?")
         raise
 
+def getParentNameFromSelection():
+    lst = om.MSelectionList()
+    om.MGlobal.getActiveSelectionList(lst)
+    dagPath = om.MDagPath()
+    comp = om.MObject()
+    try:
+        lst.getDagPath(0, dagPath, comp)
+        parentName = dagPath.fullPathName()
+        return parentName
+    except:
+        print ("Unable to get parent name. Have you specified an appropriate node?")
+        raise
+
+# def getObjectFromSelection():
+#     lst = om.MSelectionList()
+#     om.MGlobal.getActiveSelectionList(lst)
+#     obj = om.MObject()    
+#     try:
+#         lst.getDependNode(0, obj)
+#         return obj
+#     except:
+#         print ("Unable to get MObject. Have you specified an appropriate node?")
+#         raise
+
 # function for getting pointList/s from selected edges, segregated into their corresponding segments if edges are not connected
 def getPointListFromEdges():
     edgeSelection = om.MSelectionList()
@@ -159,7 +183,8 @@ def getPointListFromEdges():
     if edgeSelection.isEmpty():
         raise Exception ("Nothing is selected!")
 
-    indexCount = edgeSelection.length()  # this does not return the proper value which is # of nodes. revise 
+    indexCount = edgeSelection.length()  # this does not return the proper value which is # of meshes. revise
+    print "edgeSelection.length = " + str(indexCount)
     masterList = []
 
     """
@@ -190,7 +215,7 @@ def getPointListFromEdges():
         if edgeComponent.apiTypeStr() != "kMeshEdgeComponent":
             raise Exception ("Selected component/s are not of type kMeshEdgeComponent. Are you in edge selection xOffsete and have selected at least 1 edge?")   
 
-        edgeMesh = om.MFnMesh(edgeDagPath)   
+        edgeMesh = om.MFnMesh(edgeDagPath)  
         edgeSIComponent = om.MFnSingleIndexedComponent(edgeComponent)
         edgeCount = edgeSIComponent.elementCount() 
         edgeIndices = om.MIntArray() 
@@ -200,7 +225,7 @@ def getPointListFromEdges():
         nodePointList = getPointMasterList(edgeMesh, segregatedList)
         masterList.append(nodePointList)                                                # list of lists of MPoints grouped by segregatedList
 
-    return masterList   
+    return masterList
 
 # segregate point indices into respective lists based on edge connection
 def getSegregatedPointIndices(edgeMesh, edgeIndices, edgeCount):    
@@ -228,8 +253,6 @@ def getSegregatedPointIndices(edgeMesh, edgeIndices, edgeCount):
             edgeMesh.getVertexNormal(inP1, True, N)
             pointNrms[inP1] = N
 
-        print "Current Edge ID " + str(edgeID) + " at Index: " + str(index)
-
         # if edge exists anywhere inside any of the lists so far, skip to next edge
         for cidx in xrange(len(segregatedList)):
             if edgeID in segregatedList[cidx][0]:
@@ -246,33 +269,27 @@ def getSegregatedPointIndices(edgeMesh, edgeIndices, edgeCount):
                 if inP0 == headPoint:                               # case 1: incoming p0 matches head of existing list
                     currentEdgeIndices.insert(0, edgeID)            # add edgeID to list of connected edges
                     currentPoints.insert(0, inP1)                   # insert partner to head (inP1, head, ...) - p1 is now head of list
-                    print "Connection found at point p0 to head."
                     break
                 elif inP1 == headPoint:                             # case 2: incoming p1 matches head of existing list
                     currentEdgeIndices.insert(0, edgeID)            # add edgeID to list of connected edges
                     currentPoints.insert(0, inP0)                   # insert partner to head (inP0, head, ...) - p0 is now head of list
-                    print "Connection found at point p1 to head."
                     break
                 elif inP0 == tailPoint:                             # case 3: incoming p0 matches tail of existing list
                     currentEdgeIndices.append(edgeID)               # add edgeID to list of connected edges
                     currentPoints.append(inP1)                      # insert partner to tail (..., tail, p1) - p1 is now tail of list
-                    print "Connection found at point p0 to tail."
                     break                               
                 elif inP1 == tailPoint:                             # case 4: incoming p1 matches tail of existing list
                     currentEdgeIndices.append(edgeID)               # add edgeID to list of connected edges
-                    currentPoints.append(inP0)                      # insert partner to tail (..., tail, p0) - p0 is now tail of list
-                    print "Connection found at point p1 to tail."   
+                    currentPoints.append(inP0)                      # insert partner to tail (..., tail, p0) - p0 is now tail of list 
                     break   
                 else:
                     if inP0 in currentPoints or inP1 in currentPoints:      # case 5: either p1 or p0 is somewhere in the middle of existing list
                         segregatedList.append([[edgeID], [inP0, inP1]])     # create a new point list entry (as a T-section of the shared point)
                         listCount += 1
-                        print "Connection found as T-section. Creating new point list."
                         break
             else:
                 segregatedList.append([[edgeID], [inP0, inP1]])     # case 6: edge's points are not connected anywhere
                 listCount += 1                                   # create a new independent point list entry 
-                print "No connections. Creating new point list."
 
     # connecting point lists with shared endpoints
     # Note: duplicate edges have already been removed in previous step so no need to check for them again below
@@ -307,10 +324,9 @@ def getSegregatedPointIndices(edgeMesh, edgeIndices, edgeCount):
                 l0 = set(outPoints)                                                     
                 l1 = set(compPoints)
                 if l0 == l1:
-                    print "Case 0: (duplicate) Skipping entry"                  # case 0: duplicate set of points, skip entry 
+                    # case 0: duplicate set of points, skip entry 
                     break
-                else:
-                    print "Case 1: (edge case) Points connected in a loop"      # case 1: (edge case) points connected in a loop (essentially closing the loop)
+                else:                                                           # case 1: (edge case) points connected in a loop (essentially closing the loop)                                                                                
                     compPoints.reverse()                                        # reverse the order of the points to be added 
                     compEdgeIndices.reverse()                                   # reverse the order of the edge indices to be added               
                     outPoints[:0] = compPoints[:-1]                             # insert the contents of the incoming points in reverse order in front (must add at least either head or tail to close the loop)                                
@@ -318,8 +334,7 @@ def getSegregatedPointIndices(edgeMesh, edgeIndices, edgeCount):
                     isMerged = True
                 break 
 
-            if outHead == compHead:                         # case 2: current head connected to opposing head
-                print "Case 2: outHead == compHead"                                     
+            if outHead == compHead:                         # case 2: current head connected to opposing head                                 
                 compPoints.reverse()                        # reverse the order of the points to be added 
                 compEdgeIndices.reverse()                   # reverse the order of the edge indices to be added    
                 outPoints[:0] = compPoints[:-1]             # insert the contents of the incoming points in reverse order in front, excluding the connected point at the last index
@@ -328,8 +343,7 @@ def getSegregatedPointIndices(edgeMesh, edgeIndices, edgeCount):
                 break
 
             # working
-            elif outHead == compTail:                       # case 3: current head connected to opposing tail      
-                print "Case 3: outHead == compTail"    
+            elif outHead == compTail:                       # case 3: current head connected to opposing tail         
                 outPoints[:0] = compPoints[:-1]             # insert the contents of the incoming points in reverse order in front, excluding the connected point at the last index
                 outEdgeIndices[:0] = compEdgeIndices[:]     # insert the associated edge indices in front  
                 isMerged = True
@@ -337,7 +351,6 @@ def getSegregatedPointIndices(edgeMesh, edgeIndices, edgeCount):
 
             # working
             elif outTail == compHead:                       # case 4: current tail connected to opposing head
-                print "Case 4: outTail == compHead"
                 print compPoints[1:] 
                 outPoints.extend(compPoints[1:])            # extend the output list by the incoming list, excluding the connected point at the first index
                 outEdgeIndices.extend(compEdgeIndices[:] )  # extend the output edge indices by the associated incoming edge indices
@@ -345,8 +358,7 @@ def getSegregatedPointIndices(edgeMesh, edgeIndices, edgeCount):
                 break
 
             # working    
-            elif outTail == compTail:                       # case 5: current tail connected to opposing tail
-                print "Case 5: outTail == compTail"                 
+            elif outTail == compTail:                       # case 5: current tail connected to opposing tail                
                 compPoints.reverse()                        # reverse the order of the points to be added 
                 compEdgeIndices.reverse()                   # reverse the order of the edge indices to be added  
                 outPoints.extend(compPoints[1:])            # extend the output list by the reversed incoming list, excluding the connected point at the first index
@@ -357,7 +369,6 @@ def getSegregatedPointIndices(edgeMesh, edgeIndices, edgeCount):
                 compIndex += 1              # if no matching cases are found, proceed with next iteration
 
         if isMerged == True:                        
-            print "resulting points list : " + str(outPoints)
             outList.pop(compIndex)          # remove old list entry that has already been merged (both edge indices and points list)
             listLength = len(outList)       # update the list length
             outIndex = 0                    # start again from the beginning
