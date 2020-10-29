@@ -1,7 +1,7 @@
 """
 -- pointNoodler plugin --
 Author          : Sim Luigi
-Last xOffsetified   : 2020.10.28
+Last xOffsetified   : 2020.10.29
 
 End goal is to make a plugin that generates a 'noodle' (cylinder) that traverses any number of given points.
    (noodles sounds more fun than polyCylinder, right?) 
@@ -26,6 +26,7 @@ Benchmarks:
 """
 import maya.cmds as cmds
 import maya.OpenMaya as om
+import pprint
 
 # removing all other arguments until I can get it right and then understand the meaning & implementation of the original arguments (upVecList, parent)
 # def pointNoodler(index, pointList, radius, parent, upVectorList=None):
@@ -38,10 +39,6 @@ def pointNoodler(pointList, radius, parent, upVectorList=None):
     # error handling 2: check if radius is valid (float or int)
     if (type(radius) is not float) and (type(radius) is not int):
         raise Exception ("Specified radius is invalid!  Please enter a float or int value.")
-
-    # error handling 3: check if parent is a valid dag Object
-    # if not parent.isValid():
-    #     raise Exception ("Specified parent is invalid!  Please provide an appropriate dag object or group.")
 
     numSections = len(pointList) - 1        # -1 : minus the cap
     xOffset = float(numSections / 2.0)
@@ -160,15 +157,6 @@ def getMObject(node, obj):
         print ("Unable to get MObject. Have you specified an appropriate node?")
         raise
 
-# def getMObject(index, sel):
-#     try:
-#         obj = om.MObject()
-#         sel.getDependNode(index, obj)
-#         return obj
-#     except:
-#         print ("Unable to get MObject. Have you specified an appropriate node?")
-#         raise
-
 def getParentNameFromSelection(index, sel):
     dagPath = om.MDagPath()
     comp = om.MObject()
@@ -180,42 +168,65 @@ def getParentNameFromSelection(index, sel):
         print ("Unable to get parent name from selection. Have you selected an appropriate node?")
         raise
 
-# function for getting pointList/s from selected edges, segregated into their corresponding segments if edges are not connected
-# called once per mesh, with index as argument
-def getPointListFromEdges(index):
+# function for getting point indices from selected edges, segregated into their corresponding segments if edges are not connected
+# and combined per mesh (paired by parent name)
+def getPointDictFromEdges():
+
+    masterPointDict = {}
     edgeSelection = om.MSelectionList()
-
     om.MGlobal.getActiveSelectionList(edgeSelection)
-
+    selLength = edgeSelection.length()
+ 
     # error handling: no selection
     if edgeSelection.isEmpty():
         raise Exception ("Nothing is selected!")
 
-    edgeDagPath, edgeComponent = getMDagPath(index, edgeSelection)
-    edgeObject = om.MObject()
-    edgeSelection.getDependNode(index, edgeObject)   
-    # edgeObject = getMObject(index, edgeSelection)
+    for index in xrange(selLength):
+        edgeDagPath, edgeComponent = getMDagPath(index, edgeSelection)
+        edgeObject = om.MObject()
+        edgeSelection.getDependNode(index, edgeObject)   
 
-    # error handling: invalid selections
-    if not edgeDagPath.isValid():
-        raise Exception ("Invalid DAG Path. Have you selected an appropriate node?")   # expound on this later
-    if edgeComponent.apiTypeStr() != "kMeshEdgeComponent":
-        raise Exception ("Selected component/s are not of type kMeshEdgeComponent. Are you in edge selection xOffsete and have selected at least 1 edge?") 
-    if edgeObject.isNull():
-        raise Exception ("Resulting MObject returned a null value.  Have you selected an appropriate node?")
+        # error handling: invalid selections
+        if not edgeDagPath.isValid():
+            raise Exception ("Invalid DAG Path. Have you selected an appropriate node?")   # expound on this later
+        if edgeComponent.apiTypeStr() != "kMeshEdgeComponent":
+            raise Exception ("Selected component/s are not of type kMeshEdgeComponent. Are you in edge selection xOffsete and have selected at least 1 edge?") 
+        if edgeObject.isNull():
+            raise Exception ("Resulting MObject returned a null value.  Have you selected an appropriate node?")
 
-    masterList = []
-    edgeMesh = om.MFnMesh(edgeDagPath)  
-    edgeSIComponent = om.MFnSingleIndexedComponent(edgeComponent)
-    edgeCount = edgeSIComponent.elementCount() 
-    edgeIndices = om.MIntArray() 
-    edgeSIComponent.getElements(edgeIndices)        # returns all indices of selected edges
+        parentName = edgeDagPath.fullPathName()        
+        edgeMesh = om.MFnMesh(edgeDagPath)  
+        edgeSIComponent = om.MFnSingleIndexedComponent(edgeComponent)
+        edgeCount = edgeSIComponent.elementCount() 
+        edgeIndices = om.MIntArray() 
+        edgeSIComponent.getElements(edgeIndices)        # returns all indices of selected edges
 
-    segregatedList = getSegregatedPointIndices(edgeMesh, edgeIndices, edgeCount)    # get a list of lists with edgeIndices grouped by connected edges
-    nodePointList = getPointMasterList(edgeMesh, segregatedList)
-    masterList.append(nodePointList)                                                # list of lists of MPoints grouped by segregatedList
+        segregatedList = getSegregatedPointIndices(edgeMesh, edgeIndices, edgeCount)    # get a list of lists with edgeIndices grouped by connected edges
 
-    return masterList
+        """
+        1.) Keeps segregation but unnecessarily creates a list on top of the list, resulting in a length of 1 insteaad of the actual value length
+        """    
+        pointList = getPointMasterList(edgeMesh, segregatedList)                    # get the points associated with the point indices obtained
+        
+        entry = masterPointDict.get(parentName, []) 
+        entry.append(pointList)   
+        masterPointDict[parentName] = entry
+   
+        
+        """
+        2.) Works across meshes but undoes segregation
+        """
+        # for index in xrange(len(segregatedList)):
+        #     pointsLength = len(segregatedList[index][1])       
+        #     for i in xrange(pointsLength):
+        #         point = om.MPoint()
+        #         edgeMesh.getPoint(segregatedList[index][1][i], point)
+        #         entry = masterPointDict.get(parentName, []) 
+        #         entry.append(point)           
+        #         masterPointDict[parentName] = entry 
+
+    pprint.pprint(masterPointDict)    
+    return masterPointDict
 
 # segregate point indices into respective lists based on edge connection
 def getSegregatedPointIndices(edgeMesh, edgeIndices, edgeCount):    
@@ -304,10 +315,10 @@ def getSegregatedPointIndices(edgeMesh, edgeIndices, edgeCount):
         compTail = outList[compIndex][1][-1]
 
         # debug
-        print "outHead: " + str(outHead) + ", outTail: " + str(outTail)
-        print "compHead: " + str(compHead) + ", compTail: " + str(compTail)
-        print "outPoints: " + str(outPoints)
-        print "compPoints: " + str(compPoints)
+        # print "outHead: " + str(outHead) + ", outTail: " + str(outTail)
+        # print "compHead: " + str(compHead) + ", compTail: " + str(compTail)
+        # print "outPoints: " + str(outPoints)
+        # print "compPoints: " + str(compPoints)
 
         while compIndex < listLength:
             if outHead == compHead and outTail == compTail:                     # test for duplicate/looping points
