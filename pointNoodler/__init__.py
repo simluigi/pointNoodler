@@ -1,9 +1,9 @@
 """
 -- pointNoodler plugin --
 Author          : Sim Luigi
-Last xOffsetified   : 2020.10.29
+Last xOffsetified   : 2020.11.23
 
-End goal is to make a plugin that generates a 'noodle' (cylinder) that traverses any number of given points.
+End goal is to make a plugin that generates a 'noodle' (cylinder) that traverses any number of given points across any number of meshes.
    (noodles sounds more fun than polyCylinder, right?) 
 
 Benchmarks:
@@ -23,10 +23,31 @@ Benchmarks:
     * work across multiple meshes (in progress)
 -Get the upVecList                                          (in progress as of 2020.10.28 - functionality currently included in segregatePointIndices())
 
+*******Current Task:   (in progress as of 2020.11.23)
+-Implement parameters as class to eliminate unnecessary list nesting 
+and handle data management better  
+
 """
 import maya.cmds as cmds
 import maya.OpenMaya as om
 import pprint
+
+# 2020.11.23: instanced per generated cylinder, not sure yet how to proceed
+class Noodle:                                       
+    def __init__(self, pointList, radius, parent):
+        
+        self.m_ID = 0
+
+        self.m_PointList = pointList
+        self.m_Radius = radius
+        self.m_Parent = parent
+
+        self.m_Object   # ? not sure what to do here yet
+        self.m_DagPath
+        self.m_Component
+
+        self.mEdgeIDs = []
+        self.mPointList = []
 
 # removing all other arguments until I can get it right and then understand the meaning & implementation of the original arguments (upVecList, parent)
 # def pointNoodler(index, pointList, radius, parent, upVectorList=None):
@@ -94,7 +115,7 @@ def pointNoodler(pointList, radius, parent, upVectorList=None):
         om.MScriptUtil.createMatrixFromList((avgI.x, avgI.y, avgI.z, 0, avgJ.x, avgJ.y, avgJ.z, 0, avgK.x, avgK.y, avgK.z, 0, o.x, o.y, o.z, 0), matrix)
 
         # translate points HERE
-        for index in sectionIndices[section]:       # error when using a pointList with an even number of elements (-1 : odd number of sections)
+        for index in sectionIndices[section]: 
             p = noodlePoints[index]                
             p.x = 0
             noodlePoints.set(p * matrix, index)
@@ -124,20 +145,6 @@ def pointNoodler(pointList, radius, parent, upVectorList=None):
 """
 helper functions
 """
-
-# basic DAG path and Depend Node getter functions
-# def getMDagPath(node):
-#     lst = om.MSelectionList()
-#     lst.add(node)
-#     dagPath = om.MDagPath()
-#     comp = om.MObject()
-#     try:
-#         lst.getDagPath(0, dagPath, comp)
-#         return dagPath, comp
-#     except:
-#         print ("Unable to get MDagPath. Have you specified an appropriate node?")
-#         raise
-
 def getMDagPath(index, sel):
     dagPath = om.MDagPath()
     comp = om.MObject()
@@ -145,7 +152,7 @@ def getMDagPath(index, sel):
         sel.getDagPath(index, dagPath, comp)
         return dagPath, comp
     except:
-        print ("Unable to get MDagPath. Have you specified an appropriate node?")
+        print ("Unable to get MDagPath. Have you selected an appropriate node?")
         raise
 
 def getMObject(node, obj):
@@ -154,7 +161,7 @@ def getMObject(node, obj):
     try:
         return lst.getDependNode(0, obj)
     except:
-        print ("Unable to get MObject. Have you specified an appropriate node?")
+        print ("Unable to get MObject. Have you selected an appropriate node?")
         raise
 
 def getParentNameFromSelection(index, sel):
@@ -171,7 +178,6 @@ def getParentNameFromSelection(index, sel):
 # function for getting point indices from selected edges, segregated into their corresponding segments if edges are not connected
 # and combined per mesh (paired by parent name)
 def getPointDictFromEdges():
-
     masterPointDict = {}
     edgeSelection = om.MSelectionList()
     om.MGlobal.getActiveSelectionList(edgeSelection)
@@ -202,28 +208,11 @@ def getPointDictFromEdges():
         edgeSIComponent.getElements(edgeIndices)        # returns all indices of selected edges
 
         segregatedList = getSegregatedPointIndices(edgeMesh, edgeIndices, edgeCount)    # get a list of lists with edgeIndices grouped by connected edges
+        lst = masterPointDict.get(parentName, [])                       
+        nodePointList = getPointMasterList(edgeMesh, segregatedList)
+        lst.append(nodePointList)                                                # list of lists of MPoints grouped by segregatedList
 
-        """
-        1.) Keeps segregation but unnecessarily creates a list on top of the list, resulting in a length of 1 insteaad of the actual value length
-        """    
-        pointList = getPointMasterList(edgeMesh, segregatedList)                    # get the points associated with the point indices obtained
-        
-        entry = masterPointDict.get(parentName, []) 
-        entry.append(pointList)   
-        masterPointDict[parentName] = entry
-   
-        
-        """
-        2.) Works across meshes but undoes segregation
-        """
-        # for index in xrange(len(segregatedList)):
-        #     pointsLength = len(segregatedList[index][1])       
-        #     for i in xrange(pointsLength):
-        #         point = om.MPoint()
-        #         edgeMesh.getPoint(segregatedList[index][1][i], point)
-        #         entry = masterPointDict.get(parentName, []) 
-        #         entry.append(point)           
-        #         masterPointDict[parentName] = entry 
+        masterPointDict[parentName] = lst
 
     pprint.pprint(masterPointDict)    
     return masterPointDict
@@ -314,12 +303,6 @@ def getSegregatedPointIndices(edgeMesh, edgeIndices, edgeCount):
         compHead = outList[compIndex][1][0]
         compTail = outList[compIndex][1][-1]
 
-        # debug
-        # print "outHead: " + str(outHead) + ", outTail: " + str(outTail)
-        # print "compHead: " + str(compHead) + ", compTail: " + str(compTail)
-        # print "outPoints: " + str(outPoints)
-        # print "compPoints: " + str(compPoints)
-
         while compIndex < listLength:
             if outHead == compHead and outTail == compTail:                     # test for duplicate/looping points
                 l0 = set(outPoints)                                                     
@@ -327,7 +310,8 @@ def getSegregatedPointIndices(edgeMesh, edgeIndices, edgeCount):
                 if l0 == l1:
                     # case 0: duplicate set of points, skip entry 
                     break
-                else:                                                           # case 1: (edge case) points connected in a loop (essentially closing the loop)                                                                                
+                else:                                                
+                                                                                # case 1: (edge case) points connected in a loop (essentially closing the loop)                                                                                
                     compPoints.reverse()                                        # reverse the order of the points to be added 
                     compEdgeIndices.reverse()                                   # reverse the order of the edge indices to be added               
                     outPoints[:0] = compPoints[:-1]                             # insert the contents of the incoming points in reverse order in front (must add at least either head or tail to close the loop)                                
@@ -385,13 +369,10 @@ def getSegregatedPointIndices(edgeMesh, edgeIndices, edgeCount):
 def getPointMasterList(edgeMesh, segregatedList):
     masterList = []
     for index in xrange(len(segregatedList)):        
-        pointList = []
         for i in xrange(len(segregatedList[index][1])):
             point = om.MPoint()
-            edgeMesh.getPoint(segregatedList[index][1][i], point)
-            pointList.append(point)           
-        masterList.append(pointList)
-
+            edgeMesh.getPoint(segregatedList[index][1][i], point)                     
+            masterList.append(point)
     return masterList   # list of lists of MPoints segregated into their own divisions
 
 # print matrix contents for debugging
